@@ -1,0 +1,24 @@
+# Session scratch & local agent handoff notes (never commit)
+project-info.md
+docs/project-info.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node / Web
+node_modules/
+.vite/
+
+# OS & Temp
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.log
