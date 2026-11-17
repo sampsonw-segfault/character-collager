@@ -7,11 +7,9 @@ const VALID_NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'-]*$/
  * Parses a portrait filename into a readable character nameplate, or returns ""
  * if no clean character name can be detected.
  * Examples:
- * - "1-1-Seferus.png" -> "Seferus"
- * - "0-Grugmon-70.png" -> "Grugmon"
- * - "0s-1-Feodora.png" -> "Feodora"
- * - "Gen1-Amma.png" -> "Amma"
- * - "Throne-background.png" -> ""
+ * - "1-1-Arthur.png" -> "Arthur"
+ * - "0-Eleanor-70.png" -> "Eleanor"
+ * - "background.png" -> ""
  * - "IMG_4821.png" -> ""
  */
 export function parseCharacterNameFromFilename(fileName: string): string {

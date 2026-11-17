@@ -460,8 +460,8 @@ export const LeftFileBrowser: React.FC<LeftFileBrowserProps> = ({
           <div className="empty-state">
             <FolderOpen size={28} />
             <p>
-              Click <strong>+ Add Folder</strong> to load one or more local directories (such as{' '}
-              <code>Grugmon</code> or <code>Stanley</code>) and drag portraits onto the canvas.
+              Click <strong>+ Add Folder</strong> to load one or more local directories and drag
+              portraits onto the canvas.
             </p>
             <p className="muted-hint">
               100% local in your browser — no images are ever uploaded.
