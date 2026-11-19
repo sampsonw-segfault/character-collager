@@ -2,14 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   FolderOpen,
-  Lock,
   RefreshCw,
-  RotateCcw,
   Settings,
-  Square,
 } from 'lucide-react';
 import {
-  computeProportionalOutput,
+  computeScaledOutput,
   SnapshotterConfig,
   SnapshotterConnectionState,
   SnapshotterStatus,
@@ -38,6 +35,12 @@ function clampDim(val: number, fallback: number): number {
   return Math.max(16, Math.min(9999, Math.round(val)));
 }
 
+function clampScale(val: number, fallback: number): number {
+  if (!Number.isFinite(val)) return fallback;
+  const clamped = Math.max(0.05, Math.min(10.0, val));
+  return Math.round(clamped * 10000) / 10000;
+}
+
 export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
   open,
   anchorRef,
@@ -60,8 +63,7 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [capWInput, setCapWInput] = useState('500');
   const [capHInput, setCapHInput] = useState('500');
-  const [outWInput, setOutWInput] = useState('500');
-  const [outHInput, setOutHInput] = useState('500');
+  const [scaleInput, setScaleInput] = useState('1');
 
   const cfg = status?.config ?? null;
 
@@ -69,22 +71,8 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
     if (!cfg) return;
     setCapWInput(String(cfg.box_width));
     setCapHInput(String(cfg.box_height));
-    const out = computeProportionalOutput(
-      cfg.box_width,
-      cfg.box_height,
-      cfg.scale_enabled,
-      cfg.scale_anchor_axis,
-      cfg.scale_target_px
-    );
-    setOutWInput(String(out.width));
-    setOutHInput(String(out.height));
-  }, [
-    cfg?.box_width,
-    cfg?.box_height,
-    cfg?.scale_enabled,
-    cfg?.scale_anchor_axis,
-    cfg?.scale_target_px,
-  ]);
+    setScaleInput(String(cfg.scale ?? 1));
+  }, [cfg?.box_width, cfg?.box_height, cfg?.scale]);
 
   useEffect(() => {
     if (!open) return;
@@ -139,43 +127,30 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
     if (!cfg) return;
     const w = clampDim(Number(capWInput), cfg.box_width);
     setCapWInput(String(w));
-    if (cfg.square_lock) {
-      setCapHInput(String(w));
-      void handlePatch({ box_width: w, box_height: w });
-    } else {
-      void handlePatch({ box_width: w });
-    }
+    void handlePatch({ box_width: w });
   };
 
   const commitCaptureHeight = () => {
     if (!cfg) return;
     const h = clampDim(Number(capHInput), cfg.box_height);
     setCapHInput(String(h));
-    if (cfg.square_lock) {
-      setCapWInput(String(h));
-      void handlePatch({ box_width: h, box_height: h });
-    } else {
-      void handlePatch({ box_height: h });
-    }
+    void handlePatch({ box_height: h });
   };
 
-  const commitOutputWidth = () => {
+  const commitScale = () => {
     if (!cfg) return;
-    const w = clampDim(Number(outWInput), cfg.scale_target_px);
-    const out = computeProportionalOutput(cfg.box_width, cfg.box_height, true, 'width', w);
-    setOutWInput(String(out.width));
-    setOutHInput(String(out.height));
-    void handlePatch({ scale_anchor_axis: 'width', scale_target_px: w });
+    const nextScale = clampScale(Number(scaleInput), cfg.scale ?? 1);
+    setScaleInput(String(nextScale));
+    void handlePatch({ scale: nextScale });
   };
 
-  const commitOutputHeight = () => {
-    if (!cfg) return;
-    const h = clampDim(Number(outHInput), cfg.scale_target_px);
-    const out = computeProportionalOutput(cfg.box_width, cfg.box_height, true, 'height', h);
-    setOutWInput(String(out.width));
-    setOutHInput(String(out.height));
-    void handlePatch({ scale_anchor_axis: 'height', scale_target_px: h });
-  };
+  const outputPreview = cfg
+    ? computeScaledOutput(
+        clampDim(Number(capWInput), cfg.box_width),
+        clampDim(Number(capHInput), cfg.box_height),
+        clampScale(Number(scaleInput), cfg.scale ?? 1)
+      )
+    : { width: 500, height: 500 };
 
   return (
     <div
@@ -255,19 +230,6 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
               <Camera size={14} />
               <span>{status.overlay_active ? 'Capture Now' : 'Trigger Overlay'}</span>
             </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => void handleTrigger('reset_size')}
-              title={`Reset capture frame to ${cfg.default_width}×${cfg.default_height}`}
-            >
-              <RotateCcw size={13} />
-              <span>
-                {cfg.default_width === cfg.default_height
-                  ? `${cfg.default_width}`
-                  : `${cfg.default_width}×${cfg.default_height}`}
-              </span>
-            </button>
           </div>
 
           <div className="snapshotter-section">
@@ -296,7 +258,7 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
           </div>
 
           <div className="snapshotter-section">
-            <div className="snapshotter-label">Capture Frame</div>
+            <div className="snapshotter-label">Capture Dimensions</div>
             <div className="snapshotter-inline-inputs">
               <input
                 type="number"
@@ -323,62 +285,35 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
                 }}
                 aria-label="Capture height"
               />
-              <button
-                type="button"
-                className={`btn btn-sm btn-toggle ${cfg.square_lock ? 'active' : ''}`}
-                onClick={() => void handlePatch({ square_lock: !cfg.square_lock })}
-                title="Toggle 1:1 square lock vs free rectangle"
-              >
-                {cfg.square_lock ? <Lock size={12} /> : <Square size={12} />}
-                <span>{cfg.square_lock ? '1:1' : 'Rect'}</span>
-              </button>
+              <span className="snapshotter-prop-badge">px</span>
             </div>
           </div>
 
           <div className="snapshotter-section">
             <div className="snapshotter-label-row">
-              <label className="snapshotter-checkbox">
-                <input
-                  type="checkbox"
-                  checked={cfg.scale_enabled}
-                  onChange={(e) => void handlePatch({ scale_enabled: e.target.checked })}
-                />
-                <span>Proportional Output Scale</span>
-              </label>
-              <span className="snapshotter-muted-tag">
-                {cfg.scale_enabled ? 'Lanczos' : 'Native'}
-              </span>
+              <span className="snapshotter-label">Scale</span>
+              <span className="snapshotter-muted-tag">Lanczos</span>
             </div>
             <div className="snapshotter-inline-inputs">
               <input
                 type="number"
-                min={16}
-                max={9999}
-                disabled={!cfg.scale_enabled}
-                value={outWInput}
-                onChange={(e) => setOutWInput(e.target.value)}
-                onBlur={commitOutputWidth}
+                min={0.05}
+                max={10}
+                step={0.1}
+                value={scaleInput}
+                onChange={(e) => setScaleInput(e.target.value)}
+                onBlur={commitScale}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitOutputWidth();
+                  if (e.key === 'Enter') commitScale();
                 }}
-                aria-label="Output width"
+                aria-label="Output scale multiplier"
               />
               <span className="snapshotter-mul">×</span>
-              <input
-                type="number"
-                min={16}
-                max={9999}
-                disabled={!cfg.scale_enabled}
-                value={outHInput}
-                onChange={(e) => setOutHInput(e.target.value)}
-                onBlur={commitOutputHeight}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitOutputHeight();
-                }}
-                aria-label="Output height"
-              />
-              <span className="snapshotter-prop-badge" title="Output aspect ratio always matches capture frame">
-                Proportional
+              <span
+                className="snapshotter-prop-badge"
+                title="Resulting PNG output resolution"
+              >
+                → {outputPreview.width}×{outputPreview.height} px
               </span>
             </div>
           </div>

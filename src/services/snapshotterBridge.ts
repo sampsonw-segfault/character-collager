@@ -11,9 +11,7 @@ export interface SnapshotterConfig {
   box_width: number;
   box_height: number;
   square_lock: boolean;
-  scale_enabled: boolean;
-  scale_anchor_axis: 'width' | 'height';
-  scale_target_px: number;
+  scale: number;
   overlay_opacity: number;
   play_chime: boolean;
   capture_mode: string;
@@ -47,27 +45,21 @@ export interface SnapshotterEventHandlers {
   onError: () => void;
 }
 
-export function computeProportionalOutput(
+export function computeScaledOutput(
   capW: number,
   capH: number,
-  scaleEnabled: boolean,
-  anchorAxis: 'width' | 'height',
-  targetPx: number
+  scale: number
 ): { width: number; height: number } {
   const safeW = Math.max(1, Math.round(capW));
   const safeH = Math.max(1, Math.round(capH));
-  if (!scaleEnabled) {
+  const safeScale = Number.isFinite(scale) ? Math.max(0.05, Math.min(10.0, scale)) : 1.0;
+  if (Math.abs(safeScale - 1.0) < 1e-6) {
     return { width: safeW, height: safeH };
   }
-  const safeTarget = Math.max(1, Math.round(targetPx));
-  if (anchorAxis === 'height') {
-    const outH = safeTarget;
-    const outW = Math.max(1, Math.round(outH * (safeW / safeH)));
-    return { width: outW, height: outH };
-  }
-  const outW = safeTarget;
-  const outH = Math.max(1, Math.round(outW * (safeH / safeW)));
-  return { width: outW, height: outH };
+  return {
+    width: Math.max(1, Math.round(safeW * safeScale)),
+    height: Math.max(1, Math.round(safeH * safeScale)),
+  };
 }
 
 async function fetchWithTimeout(
