@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CollageCanvas } from './components/CollageCanvas';
 import { LeftFileBrowser } from './components/LeftFileBrowser';
 import { RightInspector } from './components/RightInspector';
+import { SnapshotterPopover } from './components/SnapshotterPopover';
 import { TopToolbar } from './components/TopToolbar';
 import {
   createInitialProject,
@@ -31,6 +32,20 @@ import {
   saveExternalFilesCache,
   saveFolderSourcesCache,
 } from './services/idbStorage';
+import {
+  browseSnapshotterFolder,
+  CapturedSnapshotMeta,
+  DEFAULT_BRIDGE_BASE_URL,
+  fetchCapturedSnapshotFile,
+  fetchSnapshotterStatus,
+  openSnapshotterFolder,
+  openSnapshotterSettings,
+  patchSnapshotterConfig,
+  SnapshotterConnectionState,
+  SnapshotterStatus,
+  subscribeSnapshotterEvents,
+  triggerSnapshotter,
+} from './services/snapshotterBridge';
 import {
   CanvasSettings,
   CollageItem,
@@ -119,6 +134,26 @@ export const App: React.FC = () => {
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+
+  const [snapshotterState, setSnapshotterState] =
+    useState<SnapshotterConnectionState>('disconnected');
+  const [snapshotterStatus, setSnapshotterStatus] = useState<SnapshotterStatus | null>(null);
+  const [snapshotterPopoverOpen, setSnapshotterPopoverOpen] = useState(false);
+  const [autoImportSnapshots, setAutoImportSnapshots] = useState(true);
+  const [autoPlaceSnapshots, setAutoPlaceSnapshots] = useState(false);
+  const snapshotterBtnRef = useRef<HTMLButtonElement | null>(null);
+  const snapshotterStateRef = useRef<SnapshotterConnectionState>('disconnected');
+  snapshotterStateRef.current = snapshotterState;
+  const unsubscribeSseRef = useRef<(() => void) | null>(null);
+  const probeInFlightRef = useRef(false);
+  const seenCaptureIdsRef = useRef<Set<string>>(new Set());
+  const autoImportSnapshotsRef = useRef(true);
+  autoImportSnapshotsRef.current = autoImportSnapshots;
+  const autoPlaceSnapshotsRef = useRef(false);
+  autoPlaceSnapshotsRef.current = autoPlaceSnapshots;
+  const ingestCapturedSnapshotRef = useRef<(meta: CapturedSnapshotMeta) => Promise<void>>(
+    async () => {}
+  );
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -603,11 +638,8 @@ export const App: React.FC = () => {
   const getNextZIndex = (items: CollageItem[]): number =>
     items.reduce((max, it) => Math.max(max, it.zIndex), 0) + 1;
 
-  const placeAsset = useCallback(
-    (relativePath: string, worldX?: number, worldY?: number) => {
-      const asset = assetMap.get(relativePath);
-      if (!asset) return;
-
+  const placeLoadedAsset = useCallback(
+    (asset: LoadedImageAsset, worldX?: number, worldY?: number) => {
       const w = asset.file.naturalWidth;
       const h = asset.file.naturalHeight;
       const existingImages = project.items.filter((it): it is ImageItem => it.type === 'image');
@@ -662,8 +694,161 @@ export const App: React.FC = () => {
       setSelectedIds([imageItem.id]);
       setCroppingImageId(null);
     },
-    [assetMap, camera.zoom, commitProject, project]
+    [camera.zoom, commitProject, project]
   );
+
+  const placeAsset = useCallback(
+    (relativePath: string, worldX?: number, worldY?: number) => {
+      const asset = assetMap.get(relativePath);
+      if (!asset) return;
+      placeLoadedAsset(asset, worldX, worldY);
+    },
+    [assetMap, placeLoadedAsset]
+  );
+
+  const ingestCapturedSnapshot = useCallback(
+    async (meta: CapturedSnapshotMeta) => {
+      if (!autoImportSnapshotsRef.current) return;
+      if (seenCaptureIdsRef.current.has(meta.id)) return;
+      seenCaptureIdsRef.current.add(meta.id);
+
+      try {
+        const file = await fetchCapturedSnapshotFile(meta, DEFAULT_BRIDGE_BASE_URL);
+        const existingLive = folderSourcesRef.current.find((s) => s.id === 'live-snapshotter');
+        const usedPaths = new Set((existingLive?.rawFiles ?? []).map((f) => f.relativePath));
+
+        let relativePath = `Live Snapshots/${meta.file_name}`;
+        if (usedPaths.has(relativePath)) {
+          const dotIdx = meta.file_name.lastIndexOf('.');
+          const stem = dotIdx > 0 ? meta.file_name.slice(0, dotIdx) : meta.file_name;
+          const ext = dotIdx > 0 ? meta.file_name.slice(dotIdx) : '';
+          let suffix = 2;
+          while (usedPaths.has(`Live Snapshots/${stem}_${suffix}${ext}`)) {
+            suffix++;
+          }
+          relativePath = `Live Snapshots/${stem}_${suffix}${ext}`;
+        }
+
+        const entry: RawWorkspaceFileEntry = {
+          relativePath,
+          folderPath: 'Live Snapshots',
+          fileName: meta.file_name,
+          file,
+        };
+        const hydrated = await hydrateWorkspaceFiles([entry]);
+        if (hydrated.length === 0) {
+          showToast(`Could not decode captured snapshot "${meta.file_name}".`);
+          return;
+        }
+        const loadedAsset = hydrated[0];
+
+        const prevSources = folderSourcesRef.current;
+        const currentLive = prevSources.find((s) => s.id === 'live-snapshotter');
+        const nextLive: FolderSourceState = currentLive
+          ? {
+              ...currentLive,
+              assets: [loadedAsset, ...currentLive.assets],
+              rawFiles: [entry, ...currentLive.rawFiles],
+            }
+          : {
+              id: 'live-snapshotter',
+              rootName: 'Live Snapshots',
+              handle: null,
+              assets: [loadedAsset],
+              rawFiles: [entry],
+            };
+        const nextSources = [nextLive, ...prevSources.filter((s) => s.id !== 'live-snapshotter')];
+        folderSourcesRef.current = nextSources;
+        setFolderSources(nextSources);
+        persistFolderSources(nextSources);
+
+        if (autoPlaceSnapshotsRef.current) {
+          placeLoadedAsset(loadedAsset);
+        }
+
+        showToast(`Captured ${meta.file_name} (${meta.width}×${meta.height})`);
+      } catch {
+        seenCaptureIdsRef.current.delete(meta.id);
+        showToast(`Could not import captured snapshot "${meta.file_name}".`);
+      }
+    },
+    [persistFolderSources, placeLoadedAsset, showToast]
+  );
+
+  ingestCapturedSnapshotRef.current = ingestCapturedSnapshot;
+
+  const connectToSnapshotter = useCallback(async (manual = false) => {
+    if (probeInFlightRef.current) return;
+    if (snapshotterStateRef.current === 'connected' && !manual) return;
+
+    probeInFlightRef.current = true;
+    if (manual) {
+      setSnapshotterState('connecting');
+    }
+
+    try {
+      const initialStatus = await fetchSnapshotterStatus(DEFAULT_BRIDGE_BASE_URL);
+      unsubscribeSseRef.current?.();
+      setSnapshotterStatus(initialStatus);
+      setSnapshotterState('connected');
+
+      unsubscribeSseRef.current = subscribeSnapshotterEvents(
+        {
+          onStatus: (nextStatus) => {
+            setSnapshotterStatus(nextStatus);
+            setSnapshotterState('connected');
+          },
+          onConfigUpdated: (nextStatus) => {
+            setSnapshotterStatus(nextStatus);
+          },
+          onOverlayState: (overlayActive) => {
+            setSnapshotterStatus((prev) =>
+              prev ? { ...prev, overlay_active: overlayActive } : prev
+            );
+          },
+          onSnapshotCaptured: (meta) => {
+            void ingestCapturedSnapshotRef.current(meta);
+          },
+          onError: () => {
+            unsubscribeSseRef.current?.();
+            unsubscribeSseRef.current = null;
+            setSnapshotterState('disconnected');
+            setSnapshotterStatus(null);
+          },
+        },
+        DEFAULT_BRIDGE_BASE_URL
+      );
+    } catch {
+      setSnapshotterState('disconnected');
+      setSnapshotterStatus(null);
+    } finally {
+      probeInFlightRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    void connectToSnapshotter(false);
+
+    const onWindowFocus = () => {
+      if (snapshotterStateRef.current === 'disconnected') {
+        void connectToSnapshotter(false);
+      }
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden && snapshotterStateRef.current === 'disconnected') {
+        void connectToSnapshotter(false);
+      }
+    };
+
+    window.addEventListener('focus', onWindowFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', onWindowFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      unsubscribeSseRef.current?.();
+      unsubscribeSseRef.current = null;
+    };
+  }, [connectToSnapshotter]);
 
   const handleAddExternalImages = async (fileList: FileList) => {
     const imageFiles = Array.from(fileList).filter(
@@ -1139,6 +1324,19 @@ export const App: React.FC = () => {
         snap={project.canvas.snap}
         zoom={camera.zoom}
         isExporting={isExporting}
+        snapshotterState={snapshotterState}
+        snapshotterOverlayActive={Boolean(snapshotterStatus?.overlay_active)}
+        snapshotterPopoverOpen={snapshotterPopoverOpen}
+        snapshotterButtonRef={snapshotterBtnRef}
+        onToggleSnapshotterPopover={() => {
+          setSnapshotterPopoverOpen((prev) => {
+            const next = !prev;
+            if (next && snapshotterState === 'disconnected') {
+              void connectToSnapshotter(false);
+            }
+            return next;
+          });
+        }}
         onUndo={handleUndo}
         onRedo={handleRedo}
         onUpdateSnap={handleUpdateSnap}
@@ -1216,6 +1414,64 @@ export const App: React.FC = () => {
           onImportFontFile={handleImportFontFile}
         />
       </div>
+
+      <SnapshotterPopover
+        open={snapshotterPopoverOpen}
+        anchorRef={snapshotterBtnRef}
+        connectionState={snapshotterState}
+        status={snapshotterStatus}
+        autoImport={autoImportSnapshots}
+        autoPlace={autoPlaceSnapshots}
+        onClose={() => setSnapshotterPopoverOpen(false)}
+        onConnect={() => void connectToSnapshotter(true)}
+        onPatchConfig={async (patch) => {
+          try {
+            const res = await patchSnapshotterConfig(patch, DEFAULT_BRIDGE_BASE_URL);
+            if (res.ok && res.status) {
+              setSnapshotterStatus(res.status);
+              return null;
+            }
+            return res.error || 'Could not update setting.';
+          } catch {
+            return 'Lost connection to Character Snapshotter.';
+          }
+        }}
+        onTrigger={async (action) => {
+          try {
+            const res = await triggerSnapshotter(action, DEFAULT_BRIDGE_BASE_URL);
+            if (res.ok) {
+              if (res.status) setSnapshotterStatus(res.status);
+              return null;
+            }
+            return res.error || 'Could not trigger Character Snapshotter.';
+          } catch {
+            return 'Lost connection to Character Snapshotter.';
+          }
+        }}
+        onBrowseFolder={async () => {
+          try {
+            await browseSnapshotterFolder(DEFAULT_BRIDGE_BASE_URL);
+          } catch {
+            showToast('Could not open desktop folder picker.');
+          }
+        }}
+        onOpenFolder={async () => {
+          try {
+            await openSnapshotterFolder(DEFAULT_BRIDGE_BASE_URL);
+          } catch {
+            showToast('Could not open snapshot folder.');
+          }
+        }}
+        onOpenSettings={async () => {
+          try {
+            await openSnapshotterSettings(DEFAULT_BRIDGE_BASE_URL);
+          } catch {
+            showToast('Could not open desktop settings dialog.');
+          }
+        }}
+        onChangeAutoImport={setAutoImportSnapshots}
+        onChangeAutoPlace={setAutoPlaceSnapshots}
+      />
 
       {toast && <div className="toast-banner">{toast}</div>}
     </div>

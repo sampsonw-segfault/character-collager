@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import {
+  Camera,
   Download,
   FolderUp,
   ImagePlus,
@@ -12,6 +13,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import { SnapshotterConnectionState } from '../services/snapshotterBridge';
 import { SnapSettings } from '../types/collage';
 
 interface TopToolbarProps {
@@ -20,6 +22,11 @@ interface TopToolbarProps {
   snap: SnapSettings;
   zoom: number;
   isExporting: boolean;
+  snapshotterState: SnapshotterConnectionState;
+  snapshotterOverlayActive: boolean;
+  snapshotterPopoverOpen: boolean;
+  snapshotterButtonRef: React.RefObject<HTMLButtonElement>;
+  onToggleSnapshotterPopover: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onUpdateSnap: (patch: Partial<SnapSettings>) => void;
@@ -39,6 +46,11 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   snap,
   zoom,
   isExporting,
+  snapshotterState,
+  snapshotterOverlayActive,
+  snapshotterPopoverOpen,
+  snapshotterButtonRef,
+  onToggleSnapshotterPopover,
   onUndo,
   onRedo,
   onUpdateSnap,
@@ -132,6 +144,36 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
         >
           <Type size={14} />
           <span>+ Text</span>
+        </button>
+      </div>
+
+      <div className="toolbar-divider" />
+
+      <div className="toolbar-group">
+        <button
+          ref={snapshotterButtonRef}
+          type="button"
+          className={`btn snapshotter-pill-btn ${snapshotterPopoverOpen ? 'active' : ''}`}
+          onClick={onToggleSnapshotterPopover}
+          title={
+            snapshotterState === 'connected'
+              ? 'Character Snapshotter Connected (click for controls)'
+              : 'Connect to Character Snapshotter desktop helper'
+          }
+        >
+          <span
+            className={`status-dot ${
+              snapshotterState === 'connected'
+                ? snapshotterOverlayActive
+                  ? 'capturing'
+                  : 'connected'
+                : snapshotterState === 'connecting'
+                  ? 'connecting'
+                  : 'offline'
+            }`}
+          />
+          <Camera size={14} />
+          <span>Snapshotter</span>
         </button>
       </div>
 
