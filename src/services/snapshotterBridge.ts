@@ -52,7 +52,7 @@ export function computeScaledOutput(
 ): { width: number; height: number } {
   const safeW = Math.max(1, Math.round(capW));
   const safeH = Math.max(1, Math.round(capH));
-  const safeScale = Number.isFinite(scale) ? Math.max(0.05, Math.min(10.0, scale)) : 1.0;
+  const safeScale = Number.isFinite(scale) ? Math.max(0.05, Math.min(9.99, scale)) : 1.0;
   if (Math.abs(safeScale - 1.0) < 1e-6) {
     return { width: safeW, height: safeH };
   }

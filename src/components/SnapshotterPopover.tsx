@@ -32,13 +32,13 @@ interface SnapshotterPopoverProps {
 
 function clampDim(val: number, fallback: number): number {
   if (!Number.isFinite(val)) return fallback;
-  return Math.max(16, Math.min(9999, Math.round(val)));
+  return Math.max(16, Math.min(99999, Math.round(val)));
 }
 
 function clampScale(val: number, fallback: number): number {
   if (!Number.isFinite(val)) return fallback;
-  const clamped = Math.max(0.05, Math.min(10.0, val));
-  return Math.round(clamped * 10000) / 10000;
+  const clamped = Math.max(0.05, Math.min(9.99, val));
+  return Math.round(clamped * 100) / 100;
 }
 
 export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
@@ -63,7 +63,7 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [capWInput, setCapWInput] = useState('500');
   const [capHInput, setCapHInput] = useState('500');
-  const [scaleInput, setScaleInput] = useState('1');
+  const [scaleInput, setScaleInput] = useState('1.00');
 
   const cfg = status?.config ?? null;
 
@@ -71,7 +71,7 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
     if (!cfg) return;
     setCapWInput(String(cfg.box_width));
     setCapHInput(String(cfg.box_height));
-    setScaleInput(String(cfg.scale ?? 1));
+    setScaleInput(clampScale(cfg.scale ?? 1, 1).toFixed(2));
   }, [cfg?.box_width, cfg?.box_height, cfg?.scale]);
 
   useEffect(() => {
@@ -140,7 +140,7 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
   const commitScale = () => {
     if (!cfg) return;
     const nextScale = clampScale(Number(scaleInput), cfg.scale ?? 1);
-    setScaleInput(String(nextScale));
+    setScaleInput(nextScale.toFixed(2));
     void handlePatch({ scale: nextScale });
   };
 
@@ -262,8 +262,9 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
             <div className="snapshotter-inline-inputs">
               <input
                 type="number"
+                className="snapshotter-dim-input"
                 min={16}
-                max={9999}
+                max={99999}
                 value={capWInput}
                 onChange={(e) => setCapWInput(e.target.value)}
                 onBlur={commitCaptureWidth}
@@ -275,8 +276,9 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
               <span className="snapshotter-mul">×</span>
               <input
                 type="number"
+                className="snapshotter-dim-input"
                 min={16}
-                max={9999}
+                max={99999}
                 value={capHInput}
                 onChange={(e) => setCapHInput(e.target.value)}
                 onBlur={commitCaptureHeight}
@@ -297,8 +299,9 @@ export const SnapshotterPopover: React.FC<SnapshotterPopoverProps> = ({
             <div className="snapshotter-inline-inputs">
               <input
                 type="number"
+                className="snapshotter-scale-input"
                 min={0.05}
-                max={10}
+                max={9.99}
                 step={0.1}
                 value={scaleInput}
                 onChange={(e) => setScaleInput(e.target.value)}

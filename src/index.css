@@ -1375,6 +1375,14 @@ select:focus {
   padding: 4px 6px;
 }
 
+.snapshotter-inline-inputs input.snapshotter-dim-input {
+  width: 74px;
+}
+
+.snapshotter-inline-inputs input.snapshotter-scale-input {
+  width: 56px;
+}
+
 .snapshotter-inline-inputs input[type='number']:disabled {
   opacity: 0.45;
   cursor: not-allowed;
